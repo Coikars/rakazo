@@ -155,7 +155,11 @@ class RakazoNotificationService : Service() {
                 .filter { alertedAttention.add("${it.runId}:${it.status}") }
                 .forEach { immediate += it to attentionCopy(copyContext, it) }
             }
-            alertedAttention.retainAll(active.map { "${it.runId}:${it.status}" }.toSet())
+            val activeAttention = active
+              .filter { it.status == "waiting_input" || it.status == "waiting_takeover" }
+              .mapTo(mutableSetOf()) { "${it.runId}:${it.status}" }
+            alertedAttention.retainAll(activeAttention)
+            persistAttentionHistory()
             immediate.forEach { (run, copy) -> post(run, copy) }
           }
         ) {
@@ -242,6 +246,12 @@ class RakazoNotificationService : Service() {
     }
   }
 
+  private fun persistAttentionHistory() {
+    getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE).edit()
+      .putStringSet(ATTENTION_RUNS, alertedAttention)
+      .apply()
+  }
+
   private fun prepareHistorySpace(generation: Long, endpoint: String, spaceId: String, token: String): Boolean? =
     synchronized(sessionLock) {
       if (generation != sessionGeneration.get()) return null
@@ -253,10 +263,12 @@ class RakazoNotificationService : Service() {
         historyWrites.reset()
         if (state.getString(SEEN_RUNS_SPACE_ID, null) == spaceId) {
           knownCompleted += state.getStringSet(SEEN_RUNS, emptySet()).orEmpty()
+          alertedAttention += state.getStringSet(ATTENTION_RUNS, emptySet()).orEmpty()
         } else {
           state.edit()
             .putString(SEEN_RUNS_SPACE_ID, spaceId)
             .remove(SEEN_RUNS)
+            .remove(ATTENTION_RUNS)
             .putBoolean(SEEN_RUNS_SEEDED, false)
             .apply()
         }
@@ -401,6 +413,7 @@ class RakazoNotificationService : Service() {
     private const val EXTRA_MUTED_BOT_ID = "com.rakazo.notifications.MUTED_BOT_ID"
     private const val STATE_PREFERENCES = "com.rakazo.notification_state"
     private const val SEEN_RUNS = "seen_runs"
+    private const val ATTENTION_RUNS = "attention_runs"
     private const val SEEN_RUNS_SEEDED = "seen_runs_seeded"
     private const val SEEN_RUNS_SPACE_ID = "seen_runs_space_id"
     internal const val EXTRA_RUN_ID = "rakazo.runId"
